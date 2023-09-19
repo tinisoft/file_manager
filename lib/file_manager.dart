@@ -1,20 +1,20 @@
 library file_manager;
 
+import 'dart:async';
 import 'dart:io';
-import 'dart:math' as math;
-import 'package:file_manager/utils/extensions.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:path_provider/path_provider.dart';
 
 import 'package:file_manager/helper/helper.dart';
 export 'package:file_manager/helper/helper.dart';
+
+import 'package:googleapis/drive/v3.dart' as drive;
 
 const _methodChannel = MethodChannel('myapp/channel');
 
 typedef _Builder = Widget Function(
   BuildContext context,
-  List<FileSystemEntity> snapshot,
+  List<drive.File> snapshot,
 );
 
 typedef _ErrorBuilder = Widget Function(
@@ -124,100 +124,43 @@ class FileManager extends StatefulWidget {
 
   /// check weather FileSystemEntity is File
   /// return true if FileSystemEntity is File else returns false
-  static bool isFile(FileSystemEntity entity) {
-    return (entity is File);
+  static bool isDirectory(drive.File driveFile) {
+    return driveFile.mimeType! == 'application/vnd.google-apps.folder';
   }
 
 // check weather FileSystemEntity is Directory
   /// return true if FileSystemEntity is a Directory else returns Directory
-  static bool isDirectory(FileSystemEntity entity) {
-    return (entity is Directory);
+  static bool isFile(drive.File driveFile) {
+    //driveFile.
+    return driveFile.mimeType! != 'application/vnd.google-apps.folder';
   }
 
-  /// Get the basename of Directory or File.
-  ///
-  /// Provide [File], [Directory] or [FileSystemEntity] and returns the name as a [String].
-  ///
-  /// ie:
-  /// ```dart
-  /// controller.basename(dir);
-  /// ```
-  /// to hide the extension of file, showFileExtension = flase
-  static String basename(dynamic entity, {bool showFileExtension = true}) {
-    if (entity is! FileSystemEntity) return "";
+  static Status status = Status.done;
 
-    final pathSegments = entity.path.split('/');
-    final filename = pathSegments.last;
-
-    if (showFileExtension) return filename;
-
-    return showFileExtension ? filename.split('.').first : filename;
+  static setBusy() {
+    status = Status.busy;
   }
 
-  static const int base = 1024;
-  static const List<String> suffix = ['B', 'KB', 'MB', 'GB', 'TB'];
-  static const List<int> powBase = [
-    1,
-    1024,
-    1048576,
-    1073741824,
-    1099511627776
-  ];
-
-  /// Format bytes to human readable string.
-  static String formatBytes(int bytes, [int precision = 2]) {
-    final base = (bytes == 0) ? 0 : (math.log(bytes) / math.log(1024)).floor();
-    final size = bytes / powBase[base];
-    final formattedSize = size.toStringAsFixed(precision);
-    return '$formattedSize ${suffix[base]}';
-  }
-
-  /// Creates the directory if it doesn't exist.
-  static Future<void> createFolder(String currentPath, String name) async {
-    await Directory(currentPath + "/" + name).create();
+  static setDone() {
+    status = Status.busy;
   }
 
   /// Return file extension as String.
   ///
   /// ie:- `File("/../image.png")` to `"png"`
-  static String getFileExtension(FileSystemEntity file) {
-    if (file is File) {
-      return file.path.split("/").last.split('.').last;
-    } else {
-      throw "FileSystemEntity is Directory, not a File";
-    }
-  }
+  // static String getFileExtension(FileSystemEntity file) {
+  //   // if (file is File) {
+  //   //   return file.path.split("/").last.split('.').last;
+  //   // } else {
+  //   //   throw "FileSystemEntity is Directory, not a File";
+  //   // }
+  // }
 
   /// Get list of available storage in the device
   /// returns an empty list if there is no storage
-  static Future<List<Directory>> getStorageList() async {
-    if (Platform.isAndroid) {
-      List<Directory> storages = (await getExternalStorageDirectories())!;
-      storages = storages.map((Directory e) {
-        final List<String> splitedPath = e.path.split("/");
-        return Directory(splitedPath
-            .sublist(
-                0, splitedPath.indexWhere((element) => element == "Android"))
-            .join("/"));
-      }).toList();
-      return storages;
-    } else if (Platform.isLinux) {
-      final Directory dir = await getApplicationDocumentsDirectory();
-
-      // Gives the home directory.
-      final Directory home = dir.parent;
-
-      // you may provide root directory.
-      // final Directory root = dir.parent.parent.parent;
-      return [home];
-    }
-    return [];
-  }
 }
 
 class _FileManagerState extends State<FileManager> {
-  Future<List<Directory>?>? currentDir;
-
   @override
   void dispose() {
     widget.controller.dispose();
@@ -227,83 +170,40 @@ class _FileManagerState extends State<FileManager> {
   @override
   void initState() {
     super.initState();
-    if (widget.controller.getCurrentPath.isNotEmpty) {
-      currentDir = Future.value([widget.controller.getCurrentDirectory]);
-    } else {
-      currentDir = FileManager.getStorageList();
-    }
-  }
 
-  Future<List<FileSystemEntity>> entityList(String path, SortBy sortBy) async {
-    List<FileSystemEntity> entitys = await Directory(path).list().toList();
-    switch (sortBy) {
-      case SortBy.name:
-        return entitys.sortByName;
-      case SortBy.size:
-        return entitys.sortBySize;
-      case SortBy.date:
-        return entitys.sortByDate;
-      case SortBy.type:
-        return entitys.sortByType;
-    }
+    widget.controller.updateFiles(widget.controller.activeFolder.value);
   }
 
   @override
   Widget build(BuildContext context) {
-    return FutureBuilder<List<Directory>?>(
-      future: currentDir,
-      builder: (context, snapshot) {
-        if (snapshot.hasData) {
-          widget.controller.setCurrentPath = snapshot.data!.first.path;
-          return _body(context);
-        } else if (snapshot.hasError) {
-          print(snapshot.error);
-          return _errorPage(context, snapshot.error);
-        } else {
-          return _loadingScreenWidget();
-        }
+    return ValueListenableBuilder<String>(
+      valueListenable: widget.controller.getActiveFolder,
+      builder: (context, activedir, _) {
+        return ValueListenableBuilder<Future<List<drive.File>>?>(
+          valueListenable: widget.controller.files,
+          builder: (context, files, _) {
+            return FutureBuilder<List<drive.File>?>(
+              future: files,
+              builder: (context, snapshot) {
+                if (snapshot.hasData) {
+                  return widget.builder(context, snapshot.data!);
+                } else if (snapshot.hasError) {
+                  print(snapshot.error);
+                  return _errorPage(context, snapshot.error);
+                } else {
+                  return _loadingScreenWidget();
+                }
+              },
+            );
+          },
+        );
       },
     );
   }
 
-  Widget _body(BuildContext context) {
-    return ValueListenableBuilder<String>(
-      valueListenable: widget.controller.getPathNotifier,
-      builder: (context, pathSnapshot, _) {
-        return ValueListenableBuilder<SortBy>(
-            valueListenable: widget.controller.getSortedByNotifier,
-            builder: (context, snapshot, _) {
-              return FutureBuilder<List<FileSystemEntity>>(
-                  future: entityList(pathSnapshot,
-                      widget.controller.getSortedByNotifier.value),
-                  builder: (context, snapshot) {
-                    if (snapshot.hasData) {
-                      List<FileSystemEntity> entitys = snapshot.data!;
-                      if (entitys.length == 0) {
-                        return _emptyFolderWidget();
-                      }
-                      if (widget.hideHiddenEntity) {
-                        entitys = entitys.where((element) {
-                          if (FileManager.basename(element) == "" ||
-                              FileManager.basename(element).startsWith('.')) {
-                            return false;
-                          } else {
-                            return true;
-                          }
-                        }).toList();
-                      }
-                      return widget.builder(context, entitys);
-                    } else if (snapshot.hasError) {
-                      print(snapshot.error);
-                      return _errorPage(context, snapshot.error);
-                    } else {
-                      return _loadingScreenWidget();
-                    }
-                  });
-            });
-      },
-    );
-  }
+  // Widget _body(BuildContext context, List<drive.File> files) {
+  //   return widget.builder(context, files);
+  // }
 
   Widget _emptyFolderWidget() {
     if (widget.emptyFolder == null) {
@@ -329,8 +229,10 @@ class _FileManagerState extends State<FileManager> {
   Widget _loadingScreenWidget() {
     if ((widget.loadingScreen == null)) {
       return Container(
-        child: Center(
-          child: CircularProgressIndicator(),
+        child: const Center(
+          child: CircularProgressIndicator(
+            color: Colors.greenAccent,
+          ),
         ),
       );
     } else {
@@ -371,10 +273,10 @@ class ControlBackButton extends StatelessWidget {
     return WillPopScope(
       child: child,
       onWillPop: () async {
-        if (await controller.isRootDirectory()) {
+        if (await controller.isRootDirectory) {
           return true;
         } else {
-          controller.goToParentDirectory();
+          // controller.goToParentDirectory();
           return false;
         }
       },
