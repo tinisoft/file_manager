@@ -19,6 +19,8 @@ class FileManagerController {
 
   final ValueNotifier<String> activeFolder = ValueNotifier<String>('kirukkal');
 
+  static final ValueNotifier<String> rootFolderId = ValueNotifier<String>("");
+
   final ValueNotifier<Status> status = ValueNotifier<Status>(Status.done);
 
   final ValueNotifier<Future<List<drive.File>>?> files =
@@ -120,49 +122,27 @@ class FileManagerController {
       final remoteFolderIds = await drive.DriveApi(GoogleAuthClient())
           .getFolderPathAsIds(folderName);
 
+      if (folderName == 'kirukkal') {
+        rootFolderId.value = remoteFolderIds.last.id!;
+      }
+
       drive.FileList remoteFileList = await driveApi.files.list(
         q: "'${remoteFolderIds.last.id!}' in parents ",
         $fields:
             "files(id, name, modifiedTime, createdTime, parents, mimeType, webContentLink ,webViewLink)",
       );
 
+      // drive.File parentFolder =
+      //     await driveApi.files.copy(parentFolderId, $fields: 'parents');
+
       List<drive.File>? remoteFiles =
           remoteFileList.files!.cast<drive.File>().toList();
 
-      // var content = await driveApi.files.get(remoteFiles.last.id!,
-      //     downloadOptions: drive.DownloadOptions.fullMedia);
-
-      // var examole = await driveApi.files.get(remoteFiles.last.id!,
-      //     downloadOptions: drive.DownloadOptions.fullMedia);
-
-      // drive.Media? export = await driveApi.files.export(
-      //     remoteFiles.last.id!, "application/zip	",
-      //     downloadOptions: drive.DownloadOptions.fullMedia);
-
-      // debugPrint(
-      //     "web link  ((((((((((())))))))))) ===================>   ${content.runtimeType}");
-
-      debugPrint(
-          "web link  ((((((((((())))))))))) ===================>   ${remoteFiles.last.webViewLink!}");
-
-      // debugPrint(
-      //     "web link  ((((((((((())))))))))) ===================>   ${remoteFiles.first.webContentLink!}");
-
-      // final response =
-      //     await http.get(Uri.parse(remoteFiles.first.webContentLink!));
-
-      // final directory = await getApplicationDocumentsDirectory();
-
-      // final filePath = '${directory!.path}/${remoteFiles.first.name}';
-
-      // Save the file to external storage
-      //File(filePath).writeAsBytesSync(response.bodyBytes);
-
-      //remoteFiles.last.webContentLink!;
+      for (var remoteFile in remoteFiles) {
+        debugPrint("parents  -----------   ${remoteFile.parents}");
+      }
 
       return remoteFiles;
-
-      // Process the remoteFileList here
     } catch (error, stackTrace) {
       print("Error: $error");
       print("Stack Trace: $stackTrace");
